@@ -1,0 +1,61 @@
+# Multi-Contrast DISCO-Diffusion GAN — Default Configuration
+# All numeric hyperparameters sourced directly from the three papers.
+
+model:
+  in_channels: 4              # [real_c1, imag_c1, real_c2, imag_c2]
+  base_channels: 64
+  channel_mults: [1, 2, 4, 8]
+  num_res_blocks: 2
+  latent_dim: 64              # dimension of latent z fed to generator bottleneck
+  time_emb_dim: 128           # sinusoidal timestep embedding dimension
+  disco:
+    num_basis: 8              # L=8 piecewise-linear basis (Paper 2 Supplement B.3)
+    kernel_size: 3            # 3x3 spatial support per basis function
+  udno_k:
+    in_channels: 4
+    out_channels: 4
+    base_channels: 32
+    depth: 4
+  num_cascades_image: 6       # number of [NO_i + DC] image-space cascades
+
+diffusion:
+  T: 16                       # fast diffusion steps (FDMR Table 6: 16 steps optimal)
+  T_refine: 30                # refinement model steps (FDMR Table 8: 30 steps optimal)
+  beta_schedule: linear       # monotonically decreasing schedule (FDMR footnote 1)
+  beta_start: 0.0001
+  beta_end: 0.02
+
+training:
+  lr: 0.0001                  # Adam lr for G and D (FDMR Section 4.3)
+  batch_size: 4               # FDMR Section 4.3
+  num_epochs: 200
+  lambda_tv: 0.001            # TV regularization weight in DGP (FDMR Eq. 12)
+  lambda_mse: 1.0             # MSE weight in generator loss (FDMR Eq. 8)
+  lambda_adv: 0.01            # adversarial weight in generator loss
+  dgp_steps: 50               # DGP adaptation iterations (FDMR Table 7: 50 optimal)
+  grad_clip: 1.0
+  save_every: 10
+  val_every: 1
+  mixed_precision: true
+
+inference:
+  acceleration: 5             # undersampling factor (5x default; also test 10x)
+  mask_type: random           # "random" (variable density) or "radial" (pseudo-radial)
+  gamma_t: 1.0                # annealing term γ_t (Levac et al. Eq. 13-14)
+  sigma_noise: 0.01           # MRI noise std σ (Levac et al. Section III-C)
+  langevin_steps: 100         # annealed Langevin dynamics steps (Levac et al.)
+  eta_langevin: 0.01          # Langevin step size η
+
+data:
+  image_size: 256             # CC-359 and IXI both use 256x256 (FDMR Section 5.1.1)
+  num_contrasts: 2
+  dataset: CC359              # "CC359", "IXI", or "SKMTEA"
+  train_split: 0.9            # 90/10 train/test (IXI split from FDMR Section 5.1.1)
+  normalize_per_volume: true
+  center_fraction: 0.08       # ACS center fraction for variable-density masks
+
+paths:
+  data_root: ./data/raw
+  checkpoint_dir: ./checkpoints
+  log_dir: ./logs
+  output_dir: ./outputs
