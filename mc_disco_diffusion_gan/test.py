@@ -134,15 +134,13 @@ def main(args: argparse.Namespace) -> None:
         beta_start=config.diffusion.beta_start,
         beta_end=config.diffusion.beta_end,
         schedule=config.diffusion.beta_schedule,
-        device=device,
-    )
+    ).to(device)
     refine_schedule = DiffusionNoiseSchedule(
         T=config.diffusion.T_refine,
         beta_start=config.diffusion.beta_start,
         beta_end=config.diffusion.beta_end / 4,
         schedule=config.diffusion.beta_schedule,
-        device=device,
-    )
+    ).to(device)
 
     dc_layer  = DataConsistencyLayer().to(device)
     ndc_layer = NoiseMixedDataConsistencyLayer().to(device)

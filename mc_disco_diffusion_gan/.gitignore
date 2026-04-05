@@ -1,0 +1,37 @@
+# Data files (large HDF5 datasets)
+data/raw/
+data/processed/
+*.h5
+*.hdf5
+
+# Training outputs
+checkpoints/
+logs/
+outputs/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Jupyter / Colab
+.ipynb_checkpoints/
+*.ipynb
+
+# Environment
+.env
+.venv/
+venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo

@@ -39,19 +39,14 @@ class DiffusionNoiseSchedule(nn.Module):
         beta_start: float = 1e-4,
         beta_end: float = 0.02,
         schedule: str = "linear",
-        device: Optional[torch.device] = None,
     ) -> None:
         super().__init__()
         self.T = T
 
         # --- Build β schedule (FDMR Eq. 3; FDMR footnote 1: monotonically decreasing) ---
         if schedule == "linear":
-            # Linear from beta_start to beta_end; FDMR uses a decreasing schedule,
-            # which corresponds to larger noise at early (high-t) steps and smaller
-            # at late (low-t) steps. We match the DDPM convention: β increases with t.
             betas = torch.linspace(beta_start, beta_end, T)
         elif schedule == "cosine":
-            # Cosine schedule (improved DDPM) — not used by FDMR but exposed for ablation
             steps = T + 1
             s = 0.008
             x = torch.linspace(0, T, steps)
@@ -63,10 +58,7 @@ class DiffusionNoiseSchedule(nn.Module):
             raise ValueError(f"Unknown schedule: {schedule}")
 
         alphas = 1.0 - betas
-        # ᾱ_t = Π_{s=1}^{t} α_s  (FDMR Eq. 3)
         alpha_bars = torch.cumprod(alphas, dim=0)
-
-        # Prepend ᾱ_0 = 1 for t=0 indexing in posterior calculations
         alpha_bars_prev = torch.cat([torch.tensor([1.0]), alpha_bars[:-1]])
 
         # Posterior variance σ_t² = β_t * (1 - ᾱ_{t-1}) / (1 - ᾱ_t)  (DDPM Eq. 7)
@@ -82,7 +74,7 @@ class DiffusionNoiseSchedule(nn.Module):
         post_mean_coef1 = torch.sqrt(alpha_bars_prev) * betas / (1.0 - alpha_bars)
         post_mean_coef2 = torch.sqrt(alphas) * (1.0 - alpha_bars_prev) / (1.0 - alpha_bars)
 
-        # Register as buffers (moved with .to(device))
+        # Register as buffers (moved with .to(device) and saved in state_dict)
         self.register_buffer("betas", betas)
         self.register_buffer("alphas", alphas)
         self.register_buffer("alpha_bars", alpha_bars)
@@ -109,8 +101,8 @@ class DiffusionNoiseSchedule(nn.Module):
         Returns:
             Tensor of shape [B, 1, 1, 1] for broadcasting over [B, C, H, W].
         """
-        # Convert 1-indexed t to 0-indexed
-        idx = (t - 1).long().clamp(0, self.T - 1)
+        # Convert 1-indexed t to 0-indexed and ensure it is on the same device as the buffer
+        idx = (t - 1).long().clamp(0, self.T - 1).to(buffer.device)
         return buffer[idx].reshape(-1, 1, 1, 1)
 
     # ------------------------------------------------------------------
@@ -198,7 +190,7 @@ class DiffusionNoiseSchedule(nn.Module):
         noise = torch.randn_like(x_t)
 
         # Mask noise at t=1 to avoid adding noise at the final denoising step
-        t_is_one = (t == 1).reshape(-1, 1, 1, 1).float()
+        t_is_one = (t == 1).reshape(-1, 1, 1, 1).float().to(x_t.device)
         return mean + (1.0 - t_is_one) * torch.sqrt(var) * noise
 
     def get_alpha_bar(self, t: torch.Tensor) -> torch.Tensor:

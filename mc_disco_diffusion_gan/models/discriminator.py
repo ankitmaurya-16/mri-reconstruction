@@ -68,20 +68,22 @@ class _SpectralNormTheta(nn.Module):
 
     def __init__(self, shape: tuple) -> None:
         super().__init__()
-        # u and v vectors for power iteration (shape of the flattened matrix)
         out_ch, in_ch, L = shape
         self.register_buffer("u", F.normalize(torch.randn(out_ch), dim=0))
         self.register_buffer("v", F.normalize(torch.randn(in_ch * L), dim=0))
 
     def forward(self, theta: torch.Tensor) -> torch.Tensor:
         out_ch, in_ch, L = theta.shape
-        W = theta.reshape(out_ch, in_ch * L)  # flatten for SVD approximation
-        # One step of power iteration
-        u = F.normalize(W @ self.v, dim=0)
-        v = F.normalize(W.T @ u, dim=0)
-        sigma = u @ W @ v
-        self.u.copy_(u.detach())
-        self.v.copy_(v.detach())
+        W = theta.reshape(out_ch, in_ch * L)
+        # Use stored u,v for sigma (differentiable w.r.t. theta)
+        sigma = self.u @ W @ self.v
+        # Power iteration update (only during training, using detached W)
+        if self.training:
+            with torch.no_grad():
+                u_new = F.normalize(W.detach() @ self.v, dim=0)
+                v_new = F.normalize(W.detach().T @ u_new, dim=0)
+                self.u.data.copy_(u_new)
+                self.v.data.copy_(v_new)
         return theta / sigma
 
 

@@ -17,6 +17,7 @@ its Appendix A.
 
 from __future__ import annotations
 
+import math
 from typing import List, Optional, Tuple
 
 import torch
@@ -48,9 +49,6 @@ def sinusoidal_embedding(t: torch.Tensor, dim: int) -> torch.Tensor:
     )
     args = t[:, None].float() * freqs[None, :]
     return torch.cat([torch.sin(args), torch.cos(args)], dim=-1)
-
-
-import math
 
 
 # ---------------------------------------------------------------------------
@@ -272,34 +270,44 @@ class UDNODecoder(nn.Module):
 
         # Build decoder in reverse order
         reversed_mults = list(reversed(channel_mults))
-        for level, mult in enumerate(reversed_mults):
-            in_ch = base_channels * mult
-            # After concatenation with skip, input doubles
-            if level == 0:
-                block_in_ch = in_ch  # bottleneck — no skip at the very bottom
-            else:
-                prev_mult = reversed_mults[level - 1]
-                block_in_ch = in_ch + base_channels * prev_mult
+        
+        # Channel count of the feature map 'h' as it enters the decoder.
+        # Starts with the output from the bottleneck.
+        h_ch = base_channels * reversed_mults[0]
 
-            out_ch = base_channels * mult if level == len(reversed_mults) - 1 else base_channels * reversed_mults[level + 1]
-            # Simpler: match the encoder's skip output channels
+        for level, mult in enumerate(reversed_mults):
+            # Target output channel count for this decoder level
+            out_ch = base_channels * mult
+            
+            # The channel count of the skip connection arriving from the encoder
             skip_ch = base_channels * mult
-            concat_ch = in_ch + skip_ch if level > 0 else in_ch
+
+            if level == 0:
+                # First level connects directly to bottleneck, no skip appended here 
+                # (matches your forward method logic: `if level > 0`)
+                in_ch = h_ch
+            else:
+                # Subsequent levels concatenate `h` (h_ch) and `skip` (skip_ch)
+                in_ch = h_ch + skip_ch
 
             level_blocks = nn.ModuleList()
             for i in range(num_res_blocks):
-                in_c = (concat_ch if i == 0 else skip_ch)
+                # Only the first block handles the massive concatenated channel dimension
+                block_in_ch = in_ch if i == 0 else out_ch
                 level_blocks.append(
-                    ResidualDISCOBlock(in_c, skip_ch, num_basis, kernel_size, time_emb_dim)
+                    ResidualDISCOBlock(block_in_ch, out_ch, num_basis, kernel_size, time_emb_dim)
                 )
             self.up_blocks.append(level_blocks)
 
+            # Update tracking: feature map 'h' now has out_ch channels
+            h_ch = out_ch
+
             if level < len(reversed_mults) - 1:
-                self.upsamplers.append(UpsampleDISCO(skip_ch, num_basis))
+                self.upsamplers.append(UpsampleDISCO(h_ch, num_basis))
             else:
                 self.upsamplers.append(None)
 
-        self.out_channels = base_channels * reversed_mults[-1]
+        self.out_channels = h_ch
 
     def forward(
         self,

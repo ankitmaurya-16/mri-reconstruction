@@ -111,7 +111,7 @@ def load_checkpoint(
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    state = torch.load(checkpoint_path, map_location=device)
+    state = torch.load(checkpoint_path, map_location=device, weights_only=False)
 
     generator.load_state_dict(state["generator_state_dict"])
     refinement_gen.load_state_dict(state["refinement_gen_state_dict"])

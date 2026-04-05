@@ -81,9 +81,9 @@ class InferenceConfig:
 
 @dataclass
 class DataConfig:
-    image_size: int = 256
+    image_size: int = 320
     num_contrasts: int = 2
-    dataset: str = "CC359"                      # "CC359", "IXI", or "SKMTEA"
+    dataset: str = "fastMRI"                    # "CC359", "IXI", "SKMTEA", or "fastMRI"
     train_split: float = 0.9
     normalize_per_volume: bool = True
     center_fraction: float = 0.08              # ACS region fraction for masks
@@ -91,10 +91,17 @@ class DataConfig:
 
 @dataclass
 class PathsConfig:
-    data_root: str = "/data/mri"
+    data_root: str = "./data/raw"
     checkpoint_dir: str = "./checkpoints"
     log_dir: str = "./logs"
     output_dir: str = "./outputs"
+
+
+@dataclass
+class ColabConfig:
+    drive_root: str = "/content/drive/MyDrive/mc_disco_gan"
+    auto_mount: bool = True
+    auto_resume: bool = True
 
 
 @dataclass
@@ -105,6 +112,7 @@ class Config:
     inference: InferenceConfig = field(default_factory=InferenceConfig)
     data: DataConfig = field(default_factory=DataConfig)
     paths: PathsConfig = field(default_factory=PathsConfig)
+    colab: ColabConfig = field(default_factory=ColabConfig)
 
 
 # ---------------------------------------------------------------------------
@@ -175,6 +183,7 @@ def load_config(path: str, overrides: List[str] | None = None) -> Config:
             ("inference", InferenceConfig),
             ("data", DataConfig),
             ("paths", PathsConfig),
+            ("colab", ColabConfig),
         ]:
             if section in raw:
                 # Handle nested sub-configs manually for model section

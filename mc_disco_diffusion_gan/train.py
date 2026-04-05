@@ -8,7 +8,7 @@ extended to multi-contrast data.
 Features:
   - Dual generator training (main G_θ + refinement G_refine)
   - Time-conditioned discriminator (D_φ)
-  - Mixed precision training (torch.cuda.amp)
+  - Mixed precision training (torch.amp)
   - Gradient clipping
   - Per-epoch validation with PSNR/SSIM/NMSE metrics
   - Best-model checkpoint saving
@@ -33,7 +33,7 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam
 from torch.utils.data import DataLoader
-from torch.cuda.amp import GradScaler, autocast
+from torch.amp import GradScaler, autocast  # Updated to modern torch.amp imports
 
 # Project imports
 from utils.config import load_config, Config
@@ -71,7 +71,9 @@ def train_epoch(
     opt_G: Adam,
     opt_G_refine: Adam,
     opt_D: Adam,
-    scaler: GradScaler,
+    scaler_G: GradScaler,
+    scaler_G_refine: GradScaler,
+    scaler_D: GradScaler,
     config: Config,
     device: torch.device,
     epoch: int,
@@ -119,7 +121,7 @@ def train_epoch(
 
         z = torch.randn(B, latent_dim, device=device)
 
-        with autocast(enabled=config.training.mixed_precision):
+        with autocast(device_type=device.type, enabled=config.training.mixed_precision):
             x0_pred = generator(x_t, z, t)
 
             # Real and fake x_{t-1} samples (for discriminator)
@@ -131,13 +133,14 @@ def train_epoch(
             opt_D.zero_grad(set_to_none=True)
             d_loss = discriminator_loss(discriminator, x_prev_real, x_prev_fake, x_t, t)
 
-        scaler.scale(d_loss).backward()
-        scaler.unscale_(opt_D)
+        scaler_D.scale(d_loss).backward()
+        scaler_D.unscale_(opt_D)
         nn.utils.clip_grad_norm_(discriminator.parameters(), config.training.grad_clip)
-        scaler.step(opt_D)
+        scaler_D.step(opt_D)
+        scaler_D.update()
 
         # Generator update
-        with autocast(enabled=config.training.mixed_precision):
+        with autocast(device_type=device.type, enabled=config.training.mixed_precision):
             # Re-generate for generator gradient computation
             x0_pred_g = generator(x_t, z, t)
             x_prev_fake_g, _ = schedule.q_posterior_mean_variance(x0_pred_g, x_t, t)
@@ -154,10 +157,11 @@ def train_epoch(
             )
 
         opt_G.zero_grad(set_to_none=True)
-        scaler.scale(g_loss).backward()
-        scaler.unscale_(opt_G)
+        scaler_G.scale(g_loss).backward()
+        scaler_G.unscale_(opt_G)
         nn.utils.clip_grad_norm_(generator.parameters(), config.training.grad_clip)
-        scaler.step(opt_G)
+        scaler_G.step(opt_G)
+        scaler_G.update()
 
         # ----------------------------------------------------------------
         # Refinement generator training (T_refine=30, smaller β)
@@ -168,7 +172,7 @@ def train_epoch(
 
         z_r = torch.randn(B, latent_dim, device=device)
 
-        with autocast(enabled=config.training.mixed_precision):
+        with autocast(device_type=device.type, enabled=config.training.mixed_precision):
             x0_pred_r = refinement_gen(x_t_r, z_r, t_r)
 
             with torch.no_grad():
@@ -180,12 +184,13 @@ def train_epoch(
             opt_D.zero_grad(set_to_none=True)
             d_loss_r = discriminator_loss(discriminator, x_prev_real_r, x_prev_fake_r, x_t_r, t_r)
 
-        scaler.scale(d_loss_r).backward()
-        scaler.unscale_(opt_D)
+        scaler_D.scale(d_loss_r).backward()
+        scaler_D.unscale_(opt_D)
         nn.utils.clip_grad_norm_(discriminator.parameters(), config.training.grad_clip)
-        scaler.step(opt_D)
+        scaler_D.step(opt_D)
+        scaler_D.update()
 
-        with autocast(enabled=config.training.mixed_precision):
+        with autocast(device_type=device.type, enabled=config.training.mixed_precision):
             x0_pred_rg = refinement_gen(x_t_r, z_r, t_r)
             x_prev_fake_rg, _ = refine_schedule.q_posterior_mean_variance(x0_pred_rg, x_t_r, t_r)
 
@@ -201,12 +206,11 @@ def train_epoch(
             )
 
         opt_G_refine.zero_grad(set_to_none=True)
-        scaler.scale(g_loss_r).backward()
-        scaler.unscale_(opt_G_refine)
+        scaler_G_refine.scale(g_loss_r).backward()
+        scaler_G_refine.unscale_(opt_G_refine)
         nn.utils.clip_grad_norm_(refinement_gen.parameters(), config.training.grad_clip)
-        scaler.step(opt_G_refine)
-
-        scaler.update()
+        scaler_G_refine.step(opt_G_refine)
+        scaler_G_refine.update()
 
         # Record losses
         loss_history["G_total"].append(g_loss.item())
@@ -306,23 +310,26 @@ def main(args: argparse.Namespace) -> None:
         beta_start=config.diffusion.beta_start,
         beta_end=config.diffusion.beta_end,
         schedule=config.diffusion.beta_schedule,
-        device=device,
-    )
+    ).to(device)
     refine_schedule = DiffusionNoiseSchedule(
         T=config.diffusion.T_refine,
         beta_start=config.diffusion.beta_start,
         beta_end=config.diffusion.beta_end / 4,  # finer noise for refinement model
         schedule=config.diffusion.beta_schedule,
-        device=device,
-    )
+    ).to(device)
 
     # ----------------------------------------------------------------
-    # Build optimizers
+    # Build optimizers & Scalers
     # ----------------------------------------------------------------
     opt_G = Adam(generator.parameters(), lr=config.training.lr, betas=(0.5, 0.999))
     opt_G_refine = Adam(refinement_gen.parameters(), lr=config.training.lr, betas=(0.5, 0.999))
     opt_D = Adam(discriminator.parameters(), lr=config.training.lr, betas=(0.5, 0.999))
-    scaler = GradScaler(enabled=config.training.mixed_precision)
+    
+    # Use individual scalers for separate gradient graphs
+    use_amp = config.training.mixed_precision and device.type == "cuda"
+    scaler_G = GradScaler(device_type=device.type, enabled=use_amp)
+    scaler_G_refine = GradScaler(device_type=device.type, enabled=use_amp)
+    scaler_D = GradScaler(device_type=device.type, enabled=use_amp)
 
     # ----------------------------------------------------------------
     # Resume from checkpoint if available
@@ -401,7 +408,8 @@ def main(args: argparse.Namespace) -> None:
             generator, refinement_gen, discriminator,
             schedule, refine_schedule,
             train_loader, opt_G, opt_G_refine, opt_D,
-            scaler, config, device, epoch,
+            scaler_G, scaler_G_refine, scaler_D, 
+            config, device, epoch,
         )
 
         for k, v in epoch_losses.items():

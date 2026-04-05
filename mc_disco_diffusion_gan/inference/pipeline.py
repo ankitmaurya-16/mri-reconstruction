@@ -210,20 +210,22 @@ class ThreeStageInference:
         # Use t=1 for DGP (generator evaluated at the last denoising step)
         t_one = torch.ones(B, device=self.device, dtype=torch.long)
 
-        for step in range(num_steps):
-            optimizer.zero_grad()
+        # DGP requires gradients even when called from a no_grad context (validation)
+        with torch.enable_grad():
+            for step in range(num_steps):
+                optimizer.zero_grad()
 
-            x0_pred = gen_copy(x0_stage1, z_star, t_one)
+                x0_pred = gen_copy(x0_stage1, z_star, t_one)
 
-            # Data consistency loss: L_DC (FDMR Eq. 12, term 1)
-            l_dc = compute_dc_loss(x0_pred, y_obs, mask)
+                # Data consistency loss: L_DC (FDMR Eq. 12, term 1)
+                l_dc = compute_dc_loss(x0_pred, y_obs, mask)
 
-            # Total variation loss: L_TV (FDMR Eq. 12, term 2)
-            l_tv = tv_loss(x0_pred)
+                # Total variation loss: L_TV (FDMR Eq. 12, term 2)
+                l_tv = tv_loss(x0_pred)
 
-            loss = l_dc + lambda_tv_val * l_tv
-            loss.backward()
-            optimizer.step()
+                loss = l_dc + lambda_tv_val * l_tv
+                loss.backward()
+                optimizer.step()
 
         # Evaluate adapted generator with optimized z*
         with torch.no_grad():

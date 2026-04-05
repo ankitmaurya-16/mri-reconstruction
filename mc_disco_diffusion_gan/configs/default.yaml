@@ -1,9 +1,10 @@
 # Multi-Contrast DISCO-Diffusion GAN — Default Configuration
 # All numeric hyperparameters sourced directly from the three papers.
+# Adjusted for fastMRI single-contrast knee data on Colab T4 GPU.
 
 model:
   in_channels: 4              # [real_c1, imag_c1, real_c2, imag_c2]
-  base_channels: 64
+  base_channels: 32           # reduced from 64 for T4 GPU memory
   channel_mults: [1, 2, 4, 8]
   num_res_blocks: 2
   latent_dim: 64              # dimension of latent z fed to generator bottleneck
@@ -27,14 +28,14 @@ diffusion:
 
 training:
   lr: 0.0001                  # Adam lr for G and D (FDMR Section 4.3)
-  batch_size: 4               # FDMR Section 4.3
+  batch_size: 2               # reduced from 4 for T4 GPU memory
   num_epochs: 200
   lambda_tv: 0.001            # TV regularization weight in DGP (FDMR Eq. 12)
   lambda_mse: 1.0             # MSE weight in generator loss (FDMR Eq. 8)
   lambda_adv: 0.01            # adversarial weight in generator loss
   dgp_steps: 50               # DGP adaptation iterations (FDMR Table 7: 50 optimal)
   grad_clip: 1.0
-  save_every: 10
+  save_every: 1               # save checkpoint every epoch for Colab robustness
   val_every: 1
   mixed_precision: true
 
@@ -47,10 +48,10 @@ inference:
   eta_langevin: 0.01          # Langevin step size η
 
 data:
-  image_size: 256             # CC-359 and IXI both use 256x256 (FDMR Section 5.1.1)
+  image_size: 320             # fastMRI reconstruction_rss is 320x320
   num_contrasts: 2
-  dataset: CC359              # "CC359", "IXI", or "SKMTEA"
-  train_split: 0.9            # 90/10 train/test (IXI split from FDMR Section 5.1.1)
+  dataset: fastMRI            # "CC359", "IXI", "SKMTEA", or "fastMRI"
+  train_split: 0.9            # 90/10 train/test
   normalize_per_volume: true
   center_fraction: 0.08       # ACS center fraction for variable-density masks
 
@@ -59,3 +60,9 @@ paths:
   checkpoint_dir: ./checkpoints
   log_dir: ./logs
   output_dir: ./outputs
+
+# Colab settings (auto-detected at runtime)
+colab:
+  drive_root: /content/drive/MyDrive/mc_disco_gan  # Google Drive save path
+  auto_mount: true            # automatically mount Google Drive in Colab
+  auto_resume: true           # automatically resume from latest checkpoint

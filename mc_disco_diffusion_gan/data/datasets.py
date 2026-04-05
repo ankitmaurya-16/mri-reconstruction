@@ -359,6 +359,129 @@ class SKMTEADataset(Dataset):
 
 
 # ---------------------------------------------------------------------------
+# fastMRI Dataset (single contrast: knee/brain)
+# ---------------------------------------------------------------------------
+
+class FastMRIDataset(Dataset):
+    """
+    fastMRI dataset (single contrast knee or brain MRI).
+
+    Supports the standard fastMRI HDF5 format with keys:
+      - 'kspace': multi-coil k-space data [slices, coils, H, W] complex64
+      - 'reconstruction_rss': RSS magnitude images [slices, H, W] float32
+      - 'reconstruction_esc': ESC magnitude images [slices, H, W] float32
+
+    Since fastMRI is single contrast, both contrast channels are set to the same
+    image to maintain 4-channel compatibility with the multi-contrast architecture.
+
+    When only a single file is available, it is used for both train and val splits
+    (different slices) to avoid empty dataset errors.
+
+    Args:
+        data_root:  Path to the directory containing .h5 files.
+        split:      "train" or "val" (or "test").
+        train_frac: Fraction of data used for training.
+        image_size: Spatial crop/resize target.
+    """
+
+    def __init__(
+        self,
+        data_root: str,
+        split: str = "train",
+        train_frac: float = 0.9,
+        image_size: int = 320,
+    ) -> None:
+        super().__init__()
+
+        self.image_size = image_size
+        self.split = split
+
+        root = Path(data_root)
+        all_files = sorted(root.glob("*.h5"))
+
+        if len(all_files) == 0:
+            raise FileNotFoundError(f"No .h5 files found in {data_root}")
+
+        if len(all_files) == 1:
+            # Single file: split slices instead of files
+            self.files = all_files
+            self._single_file_mode = True
+        else:
+            n_train = max(1, int(len(all_files) * train_frac))
+            if split == "train":
+                self.files = all_files[:n_train]
+            else:
+                self.files = all_files[n_train:] if n_train < len(all_files) else all_files[-1:]
+            self._single_file_mode = False
+
+        # Build a flat index: (file_idx, slice_idx)
+        self.index: List[Tuple[int, int]] = []
+        self._slice_counts: List[int] = []
+        for f_idx, fpath in enumerate(self.files):
+            with h5py.File(str(fpath), "r") as hf:
+                for key in ["reconstruction_rss", "kspace", "reconstruction_esc"]:
+                    if key in hf:
+                        n_slices = hf[key].shape[0]
+                        break
+                else:
+                    n_slices = 0
+            self._slice_counts.append(n_slices)
+            self.index.extend([(f_idx, s) for s in range(n_slices)])
+
+        # If single file, split slices between train and val
+        if self._single_file_mode and len(self.index) > 1:
+            n_train_slices = max(1, int(len(self.index) * train_frac))
+            if split == "train":
+                self.index = self.index[:n_train_slices]
+            else:
+                self.index = self.index[n_train_slices:]
+                if len(self.index) == 0:
+                    # Ensure at least 1 val slice
+                    self.index = [(0, self._slice_counts[0] - 1)]
+
+    def __len__(self) -> int:
+        return len(self.index)
+
+    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
+        f_idx, s_idx = self.index[idx]
+        fpath = self.files[f_idx]
+
+        with h5py.File(str(fpath), "r") as hf:
+            # Prefer reconstruction_rss (magnitude), fall back to kspace
+            if "reconstruction_rss" in hf:
+                sl = hf["reconstruction_rss"][s_idx]  # [H, W] float32
+            elif "kspace" in hf:
+                ksp = hf["kspace"][s_idx]  # [coils, H, W] complex64
+                sl_cplx = np.fft.ifft2(ksp, axes=(-2, -1))
+                sl = np.sqrt((np.abs(sl_cplx) ** 2).sum(axis=0))  # RSS
+            elif "reconstruction_esc" in hf:
+                sl = hf["reconstruction_esc"][s_idx]
+            else:
+                raise KeyError(f"No recognized data key in {fpath}")
+
+        # Ensure 2D
+        if sl.ndim == 3:
+            sl_cplx = np.fft.ifft2(sl, axes=(-2, -1))
+            sl = np.sqrt((np.abs(sl_cplx) ** 2).sum(axis=0))
+
+        # To complex tensor [H, W]
+        x_cplx = _to_complex_slice(sl.squeeze())
+
+        # Center crop/pad to image_size × image_size
+        x_cplx = CC359Dataset._center_crop(x_cplx, self.image_size)
+
+        # Real 2-channel representation [2, H, W]
+        x_real = complex_to_real(x_cplx.unsqueeze(0)).squeeze(0)
+
+        # Duplicate for 4-channel (single contrast → both channels same)
+        x_4ch = torch.cat([x_real, x_real], dim=0)  # [4, H, W]
+        x_4ch, _ = normalize_volume(x_4ch.unsqueeze(0))
+        x_4ch = x_4ch.squeeze(0)
+
+        return {"x0": x_4ch, "file": str(fpath), "slice": s_idx}
+
+
+# ---------------------------------------------------------------------------
 # Multi-Contrast MRI Dataset Wrapper
 # ---------------------------------------------------------------------------
 
@@ -405,6 +528,13 @@ class MultiContrastMRIDataset(Dataset):
             )
         elif dc.dataset.upper() == "SKMTEA":
             self.base_dataset = SKMTEADataset(
+                data_root=pc.data_root,
+                split=split,
+                train_frac=dc.train_split,
+                image_size=dc.image_size,
+            )
+        elif dc.dataset.upper() == "FASTMRI":
+            self.base_dataset = FastMRIDataset(
                 data_root=pc.data_root,
                 split=split,
                 train_frac=dc.train_split,
