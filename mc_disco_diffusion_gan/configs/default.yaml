@@ -28,7 +28,7 @@ diffusion:
 
 training:
   lr: 0.0001                  # Adam lr for G and D (FDMR Section 4.3)
-  batch_size: 2               # reduced from 4 for T4 GPU memory
+  batch_size: 4               # FDMR Section 4.3 default, fits T4 with base_channels=32
   num_epochs: 200
   lambda_tv: 0.001            # TV regularization weight in DGP (FDMR Eq. 12)
   lambda_mse: 1.0             # MSE weight in generator loss (FDMR Eq. 8)
@@ -37,6 +37,7 @@ training:
   grad_clip: 1.0
   save_every: 5               # save checkpoint every 5 epochs
   val_every: 5                # validate every 5 epochs (Stage 1 only, no DGP)
+  max_val_samples: 500        # 0 = use all val slices; >0 = random subset (faster)
   mixed_precision: true
 
 inference:

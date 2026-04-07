@@ -378,15 +378,25 @@ def main(args: argparse.Namespace) -> None:
         pin_memory=torch.cuda.is_available(),
         drop_last=True,
     )
+    # Optionally cap validation to a random subset for speed
+    max_val = config.training.max_val_samples
+    if max_val > 0 and len(val_dataset) > max_val:
+        import random
+        val_indices = random.sample(range(len(val_dataset)), max_val)
+        val_subset = torch.utils.data.Subset(val_dataset, val_indices)
+        print(f"[Train] Val capped to {max_val}/{len(val_dataset)} slices")
+    else:
+        val_subset = val_dataset
+
     val_loader = DataLoader(
-        val_dataset,
-        batch_size=1,
+        val_subset,
+        batch_size=4,
         shuffle=False,
         num_workers=0,
         pin_memory=torch.cuda.is_available(),
     )
 
-    print(f"[Train] Train samples: {len(train_dataset)} | Val samples: {len(val_dataset)}")
+    print(f"[Train] Train samples: {len(train_dataset)} | Val samples: {len(val_subset)}")
 
     # ----------------------------------------------------------------
     # Build inference pipeline (for validation)

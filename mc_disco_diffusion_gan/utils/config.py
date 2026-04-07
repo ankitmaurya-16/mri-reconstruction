@@ -66,6 +66,7 @@ class TrainingConfig:
     grad_clip: float = 1.0
     save_every: int = 10
     val_every: int = 1
+    max_val_samples: int = 0                    # 0 = all; >0 = random subset for faster val
     mixed_precision: bool = True                # use torch.cuda.amp
 
 
