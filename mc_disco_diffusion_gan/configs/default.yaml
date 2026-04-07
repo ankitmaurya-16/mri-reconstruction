@@ -51,12 +51,20 @@ data:
   image_size: 320             # fastMRI reconstruction_rss is 320x320
   num_contrasts: 2
   dataset: fastMRI            # "CC359", "IXI", "SKMTEA", or "fastMRI"
-  train_split: 0.9            # 90/10 train/test
+  train_split: 0.9            # 90/10 train/test (only used if flat layout, not pre-split dirs)
   normalize_per_volume: true
   center_fraction: 0.08       # ACS center fraction for variable-density masks
+  max_files: 0                # 0 = use all .h5 files; set >0 to limit for Colab memory/speed
+
+# fastMRI data layout:
+#   data_root/
+#     knee_singlecoil_train/  *.h5   (~973 files, 72.7 GB)
+#     knee_singlecoil_val/    *.h5   (~199 files, 14.9 GB)
+#     knee_singlecoil_test/   *.h5   (test files, 1.4 GB)
+# The dataset auto-detects these subdirectories by split name.
 
 paths:
-  data_root: ./data/raw
+  data_root: ./data
   checkpoint_dir: ./checkpoints
   log_dir: ./logs
   output_dir: ./outputs

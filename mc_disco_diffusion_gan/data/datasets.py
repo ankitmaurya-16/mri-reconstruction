@@ -27,14 +27,24 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from .transforms import (
-    complex_to_real,
-    normalize_volume,
-    pair_to_4channel,
-    apply_mask_kspace,
-    zero_fill,
-)
-from .masks import MaskFactory
+try:
+    from .transforms import (
+        complex_to_real,
+        normalize_volume,
+        pair_to_4channel,
+        apply_mask_kspace,
+        zero_fill,
+    )
+    from .masks import MaskFactory
+except ImportError:
+    from data.transforms import (
+        complex_to_real,
+        normalize_volume,
+        pair_to_4channel,
+        apply_mask_kspace,
+        zero_fill,
+    )
+    from data.masks import MaskFactory
 from utils.config import Config
 
 
@@ -366,7 +376,24 @@ class FastMRIDataset(Dataset):
     """
     fastMRI dataset (single contrast knee or brain MRI).
 
-    Supports the standard fastMRI HDF5 format with keys:
+    Supports TWO directory layouts:
+
+    Layout A — Pre-split directories (standard fastMRI download):
+        data_root/
+          knee_singlecoil_train/   (or singlecoil_train/, multicoil_train/, etc.)
+            file1000000.h5
+            file1000001.h5  ...
+          knee_singlecoil_val/
+            ...
+          knee_singlecoil_test/
+            ...
+
+    Layout B — Flat directory (all .h5 files together):
+        data_root/
+          file1.h5
+          file2.h5  ...
+
+    Each .h5 file uses the standard fastMRI format with keys:
       - 'kspace': multi-coil k-space data [slices, coils, H, W] complex64
       - 'reconstruction_rss': RSS magnitude images [slices, H, W] float32
       - 'reconstruction_esc': ESC magnitude images [slices, H, W] float32
@@ -374,15 +401,21 @@ class FastMRIDataset(Dataset):
     Since fastMRI is single contrast, both contrast channels are set to the same
     image to maintain 4-channel compatibility with the multi-contrast architecture.
 
-    When only a single file is available, it is used for both train and val splits
-    (different slices) to avoid empty dataset errors.
-
     Args:
-        data_root:  Path to the directory containing .h5 files.
-        split:      "train" or "val" (or "test").
-        train_frac: Fraction of data used for training.
+        data_root:  Path to the root data directory.
+        split:      "train", "val", or "test".
+        train_frac: Fraction of data used for training (only for flat layout).
         image_size: Spatial crop/resize target.
+        max_files:  Max number of .h5 files to use (None = all). Useful for
+                    Colab where you can't fit the full 72 GB train set.
     """
+
+    # Patterns to search for pre-split subdirectories (tried in order)
+    _SPLIT_DIR_PATTERNS = {
+        "train": ["knee_singlecoil_train", "singlecoil_train", "multicoil_train", "train"],
+        "val":   ["knee_singlecoil_val", "singlecoil_val", "multicoil_val", "val"],
+        "test":  ["knee_singlecoil_test", "singlecoil_test", "multicoil_test", "test"],
+    }
 
     def __init__(
         self,
@@ -390,6 +423,7 @@ class FastMRIDataset(Dataset):
         split: str = "train",
         train_frac: float = 0.9,
         image_size: int = 320,
+        max_files: Optional[int] = None,
     ) -> None:
         super().__init__()
 
@@ -397,24 +431,49 @@ class FastMRIDataset(Dataset):
         self.split = split
 
         root = Path(data_root)
-        all_files = sorted(root.glob("*.h5"))
 
-        if len(all_files) == 0:
-            raise FileNotFoundError(f"No .h5 files found in {data_root}")
+        # --- Resolve file list ---
+        split_dir = self._find_split_dir(root, split)
 
-        if len(all_files) == 1:
-            # Single file: split slices instead of files
+        if split_dir is not None:
+            # Layout A: pre-split directories
+            all_files = sorted(split_dir.glob("*.h5"))
+            if len(all_files) == 0:
+                raise FileNotFoundError(
+                    f"No .h5 files found in {split_dir}. "
+                    f"Check that you placed your fastMRI data correctly."
+                )
             self.files = all_files
-            self._single_file_mode = True
-        else:
-            n_train = max(1, int(len(all_files) * train_frac))
-            if split == "train":
-                self.files = all_files[:n_train]
-            else:
-                self.files = all_files[n_train:] if n_train < len(all_files) else all_files[-1:]
             self._single_file_mode = False
+            print(f"[FastMRI] Using pre-split dir: {split_dir}  ({len(all_files)} files)")
+        else:
+            # Layout B: flat directory — split by fraction
+            all_files = sorted(root.glob("*.h5"))
+            if len(all_files) == 0:
+                raise FileNotFoundError(
+                    f"No .h5 files found in {data_root} or its subdirectories.\n"
+                    f"Expected either:\n"
+                    f"  {data_root}/knee_singlecoil_train/*.h5  (pre-split layout)\n"
+                    f"  {data_root}/*.h5                        (flat layout)"
+                )
 
-        # Build a flat index: (file_idx, slice_idx)
+            if len(all_files) == 1:
+                self.files = all_files
+                self._single_file_mode = True
+            else:
+                n_train = max(1, int(len(all_files) * train_frac))
+                if split == "train":
+                    self.files = all_files[:n_train]
+                else:
+                    self.files = all_files[n_train:] if n_train < len(all_files) else all_files[-1:]
+                self._single_file_mode = False
+
+        # Optionally cap number of files (for Colab / quick experiments)
+        if max_files is not None and len(self.files) > max_files:
+            print(f"[FastMRI] Limiting to {max_files}/{len(self.files)} files (max_files={max_files})")
+            self.files = self.files[:max_files]
+
+        # --- Build flat slice index: (file_idx, slice_idx) ---
         self.index: List[Tuple[int, int]] = []
         self._slice_counts: List[int] = []
         for f_idx, fpath in enumerate(self.files):
@@ -429,15 +488,24 @@ class FastMRIDataset(Dataset):
             self.index.extend([(f_idx, s) for s in range(n_slices)])
 
         # If single file, split slices between train and val
-        if self._single_file_mode and len(self.index) > 1:
+        if getattr(self, '_single_file_mode', False) and len(self.index) > 1:
             n_train_slices = max(1, int(len(self.index) * train_frac))
             if split == "train":
                 self.index = self.index[:n_train_slices]
             else:
                 self.index = self.index[n_train_slices:]
                 if len(self.index) == 0:
-                    # Ensure at least 1 val slice
                     self.index = [(0, self._slice_counts[0] - 1)]
+
+    @classmethod
+    def _find_split_dir(cls, root: Path, split: str) -> Optional[Path]:
+        """Search for a pre-split subdirectory matching the requested split."""
+        patterns = cls._SPLIT_DIR_PATTERNS.get(split, cls._SPLIT_DIR_PATTERNS.get("val", []))
+        for name in patterns:
+            candidate = root / name
+            if candidate.is_dir():
+                return candidate
+        return None
 
     def __len__(self) -> int:
         return len(self.index)
@@ -539,6 +607,7 @@ class MultiContrastMRIDataset(Dataset):
                 split=split,
                 train_frac=dc.train_split,
                 image_size=dc.image_size,
+                max_files=getattr(dc, 'max_files', None) or None,
             )
         else:
             raise ValueError(f"Unknown dataset: {dc.dataset}")

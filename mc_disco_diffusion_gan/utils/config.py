@@ -87,6 +87,7 @@ class DataConfig:
     train_split: float = 0.9
     normalize_per_volume: bool = True
     center_fraction: float = 0.08              # ACS region fraction for masks
+    max_files: int = 0                          # 0 = use all files; >0 = limit (for Colab)
 
 
 @dataclass

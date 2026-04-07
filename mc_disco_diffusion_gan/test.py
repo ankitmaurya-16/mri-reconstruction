@@ -154,9 +154,10 @@ def main(args: argparse.Namespace) -> None:
     # ----------------------------------------------------------------
     # Build test data loader
     # ----------------------------------------------------------------
-    print(f"[Test] Loading {config.data.dataset} test set...")
-    test_dataset = MultiContrastMRIDataset(config, split="val")
-    test_loader  = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=2)
+    test_split = getattr(args, 'split', 'val') or 'val'
+    print(f"[Test] Loading {config.data.dataset} {test_split} set...")
+    test_dataset = MultiContrastMRIDataset(config, split=test_split)
+    test_loader  = DataLoader(test_dataset, batch_size=1, shuffle=False, num_workers=0)
     print(f"[Test] Test samples: {len(test_dataset)}")
 
     # ----------------------------------------------------------------
@@ -305,6 +306,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--max_figures", type=int, default=20,
         help="Maximum number of comparison figures to save"
+    )
+    parser.add_argument(
+        "--split", type=str, default="val",
+        choices=["val", "test"],
+        help="Which data split to evaluate on (default: val)"
     )
     return parser.parse_args()
 

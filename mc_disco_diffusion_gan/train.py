@@ -33,7 +33,16 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam
 from torch.utils.data import DataLoader
-from torch.amp import GradScaler, autocast  # Updated to modern torch.amp imports
+try:
+    from torch.amp import GradScaler
+    from torch.amp import autocast as _autocast
+    def amp_autocast(device_type, enabled=True):
+        return _autocast(device_type=device_type, enabled=enabled)
+except ImportError:
+    from torch.cuda.amp import GradScaler
+    from torch.cuda.amp import autocast as _autocast_cuda
+    def amp_autocast(device_type, enabled=True):
+        return _autocast_cuda(enabled=enabled)
 
 # Project imports
 from utils.config import load_config, Config
@@ -121,7 +130,7 @@ def train_epoch(
 
         z = torch.randn(B, latent_dim, device=device)
 
-        with autocast(device_type=device.type, enabled=config.training.mixed_precision):
+        with amp_autocast(device.type, enabled=config.training.mixed_precision):
             x0_pred = generator(x_t, z, t)
 
             # Real and fake x_{t-1} samples (for discriminator)
@@ -140,7 +149,7 @@ def train_epoch(
         scaler_D.update()
 
         # Generator update
-        with autocast(device_type=device.type, enabled=config.training.mixed_precision):
+        with amp_autocast(device.type, enabled=config.training.mixed_precision):
             # Re-generate for generator gradient computation
             x0_pred_g = generator(x_t, z, t)
             x_prev_fake_g, _ = schedule.q_posterior_mean_variance(x0_pred_g, x_t, t)
@@ -172,7 +181,7 @@ def train_epoch(
 
         z_r = torch.randn(B, latent_dim, device=device)
 
-        with autocast(device_type=device.type, enabled=config.training.mixed_precision):
+        with amp_autocast(device.type, enabled=config.training.mixed_precision):
             x0_pred_r = refinement_gen(x_t_r, z_r, t_r)
 
             with torch.no_grad():
@@ -190,7 +199,7 @@ def train_epoch(
         scaler_D.step(opt_D)
         scaler_D.update()
 
-        with autocast(device_type=device.type, enabled=config.training.mixed_precision):
+        with amp_autocast(device.type, enabled=config.training.mixed_precision):
             x0_pred_rg = refinement_gen(x_t_r, z_r, t_r)
             x_prev_fake_rg, _ = refine_schedule.q_posterior_mean_variance(x0_pred_rg, x_t_r, t_r)
 
@@ -327,9 +336,9 @@ def main(args: argparse.Namespace) -> None:
     
     # Use individual scalers for separate gradient graphs
     use_amp = config.training.mixed_precision and device.type == "cuda"
-    scaler_G = GradScaler(device_type=device.type, enabled=use_amp)
-    scaler_G_refine = GradScaler(device_type=device.type, enabled=use_amp)
-    scaler_D = GradScaler(device_type=device.type, enabled=use_amp)
+    scaler_G = GradScaler(enabled=use_amp)
+    scaler_G_refine = GradScaler(enabled=use_amp)
+    scaler_D = GradScaler(enabled=use_amp)
 
     # ----------------------------------------------------------------
     # Resume from checkpoint if available
@@ -364,7 +373,7 @@ def main(args: argparse.Namespace) -> None:
         train_dataset,
         batch_size=config.training.batch_size,
         shuffle=True,
-        num_workers=4,
+        num_workers=2,
         pin_memory=torch.cuda.is_available(),
         drop_last=True,
     )
@@ -372,7 +381,7 @@ def main(args: argparse.Namespace) -> None:
         val_dataset,
         batch_size=1,
         shuffle=False,
-        num_workers=2,
+        num_workers=0,
         pin_memory=torch.cuda.is_available(),
     )
 
