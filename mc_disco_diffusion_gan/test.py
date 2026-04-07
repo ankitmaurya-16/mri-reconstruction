@@ -174,10 +174,14 @@ def main(args: argparse.Namespace) -> None:
     # ----------------------------------------------------------------
     # Test loop
     # ----------------------------------------------------------------
-    print(f"\n[Test] Running inference on {len(test_dataset)} samples...")
+    n_samples = args.max_samples if args.max_samples > 0 else len(test_dataset)
+    n_samples = min(n_samples, len(test_dataset))
+    print(f"\n[Test] Running inference on {n_samples} samples...")
 
     with torch.no_grad():
         for sample_idx, batch in enumerate(test_loader):
+            if sample_idx >= n_samples:
+                break
             x0    = batch["x0"].to(device)      # [1, 4, H, W]
             y_obs = batch["y_obs"].to(device)    # [1, 4, H, W]
             mask  = batch["mask"].to(device)     # [1, 1, H, W]
@@ -311,6 +315,10 @@ def parse_args() -> argparse.Namespace:
         "--split", type=str, default="val",
         choices=["val", "test"],
         help="Which data split to evaluate on (default: val)"
+    )
+    parser.add_argument(
+        "--max_samples", type=int, default=0,
+        help="Max samples to evaluate (0 = all). Useful for quick tests."
     )
     return parser.parse_args()
 

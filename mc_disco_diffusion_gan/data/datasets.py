@@ -153,7 +153,14 @@ class CC359Dataset(Dataset):
             sl = np.sqrt((np.abs(sl_cplx) ** 2).sum(axis=0))
 
         # To complex tensor [H, W]
-        x_cplx = _to_complex_slice(sl.squeeze())
+        # Ensure exactly 2D [H, W]
+        while sl.ndim > 2:
+            sl = sl.squeeze(0)
+        if sl.ndim < 2:
+            raise ValueError(
+                f"Unexpected slice shape {sl.shape} — expected 2D"
+            )
+        x_cplx = _to_complex_slice(sl)
 
         # Crop / pad to image_size × image_size
         x_cplx = self._center_crop(x_cplx, self.image_size)
@@ -267,7 +274,14 @@ class IXIDataset(Dataset):
             if sl.ndim == 3:  # multi-coil
                 sl_cplx = np.fft.ifft2(sl, axes=(-2, -1))
                 sl = np.sqrt((np.abs(sl_cplx) ** 2).sum(axis=0))
-            x_cplx = _to_complex_slice(sl.squeeze())
+            # Ensure exactly 2D [H, W]
+        while sl.ndim > 2:
+            sl = sl.squeeze(0)
+        if sl.ndim < 2:
+            raise ValueError(
+                f"Unexpected slice shape {sl.shape} — expected 2D"
+            )
+        x_cplx = _to_complex_slice(sl)
             x_cplx = CC359Dataset._center_crop(x_cplx, self.image_size)
             return complex_to_real(x_cplx.unsqueeze(0)).squeeze(0)  # [2, H, W]
 
@@ -353,7 +367,9 @@ class SKMTEADataset(Dataset):
         def _process(sl: np.ndarray) -> torch.Tensor:
             if sl.ndim == 3:  # coil dimension
                 sl = np.sqrt((np.abs(sl) ** 2).sum(axis=0))
-            x = _to_complex_slice(sl.squeeze())
+            while sl.ndim > 2:
+                sl = sl.squeeze(0)
+            x = _to_complex_slice(sl)
             x = CC359Dataset._center_crop(x, self.image_size)
             return complex_to_real(x.unsqueeze(0)).squeeze(0)  # [2, H, W]
 
@@ -519,9 +535,14 @@ class FastMRIDataset(Dataset):
             if "reconstruction_rss" in hf:
                 sl = hf["reconstruction_rss"][s_idx]  # [H, W] float32
             elif "kspace" in hf:
-                ksp = hf["kspace"][s_idx]  # [coils, H, W] complex64
-                sl_cplx = np.fft.ifft2(ksp, axes=(-2, -1))
-                sl = np.sqrt((np.abs(sl_cplx) ** 2).sum(axis=0))  # RSS
+                ksp = hf["kspace"][s_idx]  # [H, W] or [coils, H, W] complex64
+                if ksp.ndim == 2:
+                    # Singlecoil: kspace is [H, W]
+                    sl = np.abs(np.fft.ifft2(ksp, axes=(-2, -1)))
+                else:
+                    # Multicoil: kspace is [coils, H, W] — RSS combine
+                    sl_cplx = np.fft.ifft2(ksp, axes=(-2, -1))
+                    sl = np.sqrt((np.abs(sl_cplx) ** 2).sum(axis=0))
             elif "reconstruction_esc" in hf:
                 sl = hf["reconstruction_esc"][s_idx]
             else:
@@ -533,7 +554,14 @@ class FastMRIDataset(Dataset):
             sl = np.sqrt((np.abs(sl_cplx) ** 2).sum(axis=0))
 
         # To complex tensor [H, W]
-        x_cplx = _to_complex_slice(sl.squeeze())
+        # Ensure exactly 2D [H, W]
+        while sl.ndim > 2:
+            sl = sl.squeeze(0)
+        if sl.ndim < 2:
+            raise ValueError(
+                f"Unexpected slice shape {sl.shape} — expected 2D"
+            )
+        x_cplx = _to_complex_slice(sl)
 
         # Center crop/pad to image_size × image_size
         x_cplx = CC359Dataset._center_crop(x_cplx, self.image_size)
