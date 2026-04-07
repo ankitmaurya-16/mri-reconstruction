@@ -266,8 +266,9 @@ def validate(
         y_obs = batch["y_obs"].to(device)
         mask = batch["mask"].to(device)
 
-        # Run full pipeline (all 3 stages)
-        results = inference_pipeline.run(y_obs, mask, run_dgp=True, run_refinement=True)
+        # Run Stage 1 only during training validation (DGP is too slow)
+        # Full 3-stage pipeline is used at test time only
+        results = inference_pipeline.run(y_obs, mask, run_dgp=False, run_refinement=False)
         x0_final = results["final"]
 
         metrics_tracker.update(x0_final, x0)

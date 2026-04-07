@@ -35,8 +35,8 @@ training:
   lambda_adv: 0.01            # adversarial weight in generator loss
   dgp_steps: 50               # DGP adaptation iterations (FDMR Table 7: 50 optimal)
   grad_clip: 1.0
-  save_every: 1               # save checkpoint every epoch for Colab robustness
-  val_every: 1
+  save_every: 5               # save checkpoint every 5 epochs
+  val_every: 5                # validate every 5 epochs (Stage 1 only, no DGP)
   mixed_precision: true
 
 inference:
