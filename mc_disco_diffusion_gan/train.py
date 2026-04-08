@@ -390,7 +390,7 @@ def main(args: argparse.Namespace) -> None:
 
     val_loader = DataLoader(
         val_subset,
-        batch_size=4,
+        batch_size=2*config.training.batch_size,
         shuffle=False,
         num_workers=0,
         pin_memory=torch.cuda.is_available(),
