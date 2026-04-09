@@ -282,8 +282,8 @@ class IXIDataset(Dataset):
                 f"Unexpected slice shape {sl.shape} — expected 2D"
             )
         x_cplx = _to_complex_slice(sl)
-            x_cplx = CC359Dataset._center_crop(x_cplx, self.image_size)
-            return complex_to_real(x_cplx.unsqueeze(0)).squeeze(0)  # [2, H, W]
+        x_cplx = CC359Dataset._center_crop(x_cplx, self.image_size)
+        return complex_to_real(x_cplx.unsqueeze(0)).squeeze(0)  # [2, H, W]
 
         x_c1 = _load(fc1)  # [2, H, W]
         x_c2 = _load(fc2)  # [2, H, W]
